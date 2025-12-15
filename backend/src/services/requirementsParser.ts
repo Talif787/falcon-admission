@@ -16,6 +16,7 @@ export interface ProgramRequirements {
       gmatMin?: number;
     };
     age?: number;
+    minimumWorkExperience?: number; // ✅ ADD THIS
     other?: string[];
   };
 }

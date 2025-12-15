@@ -1,7 +1,6 @@
 // backend/src/server.ts
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
-import path from 'path';
 import fs from 'fs';
 import { connectDatabase } from './config/database';
 import { config } from './config/env';
@@ -28,7 +27,7 @@ class Server {
     this.app.use(
       cors({
         origin: config.frontendUrl,
-        credentials: true
+        credentials: true,
       })
     );
 
@@ -37,10 +36,10 @@ class Server {
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
     // Request logging
-    this.app.use((req, res, next) => {
+    this.app.use((req, _res, next) => {
       logger.info(`${req.method} ${req.path}`, {
         ip: req.ip,
-        userAgent: req.get('user-agent')
+        userAgent: req.get('user-agent'),
       });
       next();
     });
@@ -51,11 +50,11 @@ class Server {
 
   private initializeRoutes(): void {
     // Health check
-    this.app.get('/health', (req: Request, res: Response) => {
-      res.status(200).json({
+    this.app.get('/health', (_req: Request, res: Response) => {
+      return res.status(200).json({
         success: true,
         message: 'Server is running',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     });
 
@@ -64,10 +63,10 @@ class Server {
     this.app.use('/api/chat', chatRoutes);
 
     // 404 handler
-    this.app.use('*', (req: Request, res: Response) => {
-      res.status(404).json({
+    this.app.use('*', (_req: Request, res: Response) => {
+      return res.status(404).json({
         success: false,
-        message: 'Route not found'
+        message: 'Route not found',
       });
     });
   }
@@ -90,10 +89,8 @@ class Server {
 
   public async start(): Promise<void> {
     try {
-      // Connect to database
       await connectDatabase();
 
-      // Start server
       this.app.listen(this.port, () => {
         logger.info(`Server running on port ${this.port} in ${config.nodeEnv} mode`);
         logger.info(`API available at http://localhost:${this.port}`);

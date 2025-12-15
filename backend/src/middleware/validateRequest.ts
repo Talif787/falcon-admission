@@ -3,20 +3,21 @@ import { Request, Response, NextFunction } from 'express';
 import Joi from 'joi';
 
 export const validateRequest = (schema: Joi.ObjectSchema) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const { error } = schema.validate(req.body);
 
     if (error) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         message: 'Validation error',
-        errors: error.details.map(detail => ({
+        errors: error.details.map((detail) => ({
           field: detail.path.join('.'),
-          message: detail.message
-        }))
+          message: detail.message,
+        })),
       });
+      return; // ✅ explicit return (void)
     }
 
-    next();
+    return next(); // ✅ explicit return
   };
 };

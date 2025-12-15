@@ -1,19 +1,22 @@
 // backend/src/controllers/chatController.ts
 // FINAL VERSION - Explicitly skips English tests if not international
 
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import { ApplicantService } from '../services/applicantService';
-import KnowledgeBase from '../models/KnowledgeBase';
 
 export class ChatController {
   initializeChat = async (req: Request, res: Response) => {
     const { sessionId } = req.params;
-    const app = await ApplicantService.getApplicantBySessionId(sessionId);
-    if (!app) return res.status(404).json({ success: false });
 
-    const greeting = "Welcome! Which program - Business or Computer Science?";
+    const app = await ApplicantService.getApplicantBySessionId(sessionId);
+    if (!app) {
+      return res.status(404).json({ success: false });
+    }
+
+    const greeting = 'Welcome! Which program - Business or Computer Science?';
     await ApplicantService.addMessageToTranscript(sessionId, 'assistant', greeting);
-    res.json({ success: true, data: { message: greeting, sessionId } });
+
+    return res.json({ success: true, data: { message: greeting, sessionId } });
   };
 
   sendMessage = async (req: Request, res: Response) => {
@@ -21,7 +24,9 @@ export class ChatController {
     const { message, program } = req.body;
 
     let app = await ApplicantService.getApplicantBySessionId(sessionId);
-    if (!app) return res.status(404).json({ success: false });
+    if (!app) {
+      return res.status(404).json({ success: false });
+    }
 
     await ApplicantService.addMessageToTranscript(sessionId, 'user', message);
 
@@ -30,11 +35,9 @@ export class ChatController {
       app.program = program;
     }
 
-    const msg = message.toLowerCase().trim();
+    const msg = String(message ?? '').toLowerCase().trim();
     const save: any = {};
 
-    // EXTRACT based on what's currently missing (in order)
-    
     // 1. Name (if still Anonymous)
     if (app.studentName === 'Anonymous') {
       if (message.length < 30 && !/^\d/.test(message) && !/^(yes|no)$/i.test(message)) {
@@ -44,7 +47,7 @@ export class ChatController {
     // 2. Age
     else if (!app.age) {
       if (/^\d{2}$/.test(message)) {
-        save.age = parseInt(message);
+        save.age = parseInt(message, 10);
       }
     }
     // 3. GPA
@@ -64,10 +67,10 @@ export class ChatController {
     else if (!app.testScores?.sat && !app.testScores?.act) {
       if (msg.includes('sat')) {
         const m = message.match(/(\d{4})/);
-        if (m) save.testScores = { sat: parseInt(m[1]) };
+        if (m) save.testScores = { sat: parseInt(m[1], 10) };
       } else if (msg.includes('act')) {
         const m = message.match(/(\d{1,2})/);
-        if (m && parseInt(m[1]) <= 36) save.testScores = { act: parseInt(m[1]) };
+        if (m && parseInt(m[1], 10) <= 36) save.testScores = { act: parseInt(m[1], 10) };
       }
     }
     // 7. International status
@@ -81,7 +84,7 @@ export class ChatController {
         const m = message.match(/(\d{2,3})/);
         if (m) {
           if (!save.testScores) save.testScores = app.testScores || {};
-          save.testScores.toefl = parseInt(m[1]);
+          save.testScores.toefl = parseInt(m[1], 10);
         }
       } else if (msg.includes('ielts')) {
         const m = message.match(/(\d+\.?\d*)/);
@@ -106,7 +109,6 @@ export class ChatController {
     }
 
     app = (await ApplicantService.getApplicantBySessionId(sessionId))!;
-
     console.log('CURRENT STATE:', {
       name: app.studentName,
       age: app.age,
@@ -117,34 +119,32 @@ export class ChatController {
       international: app.isInternational,
       toefl: app.testScores?.toefl,
       statement: app.personalStatement,
-      rec: app.recommendationLetter
+      rec: app.recommendationLetter,
     });
 
     // NEXT QUESTION - EXPLICIT LOGIC
     let next = '';
-    
+
     if (app.studentName === 'Anonymous') {
-      next = "Name?";
+      next = 'Name?';
     } else if (!app.age) {
-      next = "Age?";
+      next = 'Age?';
     } else if (!app.gpa) {
-      next = "GPA?";
+      next = 'GPA?';
     } else if (app.highSchoolDiploma === undefined) {
-      next = "High school diploma? (yes/no)";
+      next = 'High school diploma? (yes/no)';
     } else if (app.program === 'Computer Science' && app.mathCourses === undefined) {
-      next = "Advanced math courses? (yes/no)";
+      next = 'Advanced math courses? (yes/no)';
     } else if (!app.testScores?.sat && !app.testScores?.act) {
-      next = "SAT or ACT score?";
+      next = 'SAT or ACT score?';
     } else if (app.isInternational === undefined) {
-      next = "International student? (yes/no)";
+      next = 'International student? (yes/no)';
     } else if (app.isInternational === true && !app.testScores?.toefl && !app.testScores?.ielts) {
-      // ONLY ask if international === true
-      next = "TOEFL or IELTS score?";
+      next = 'TOEFL or IELTS score?';
     } else if (app.personalStatement === undefined) {
-      // If not international OR has English score, skip to this
-      next = "Personal statement? (yes/no)";
+      next = 'Personal statement? (yes/no)';
     } else if (app.recommendationLetter === undefined) {
-      next = "Recommendation letter? (yes/no)";
+      next = 'Recommendation letter? (yes/no)';
     }
 
     console.log('NEXT QUESTION:', next);
@@ -154,22 +154,38 @@ export class ChatController {
       return res.json({ success: true, data: { message: next, completed: false } });
     }
 
-    // Evaluate
+    // --- Evaluation guard (fixes TS18048) ---
+    if (app.gpa === undefined) {
+      // This should not happen, but keeps TS + runtime safe.
+      return res.status(400).json({
+        success: false,
+        message: 'Missing GPA. Please provide GPA before evaluation.',
+      });
+    }
+
     const minGPA = app.program === 'Computer Science' ? 3.3 : 3.0;
-    const ok = app.gpa >= minGPA && app.highSchoolDiploma && app.personalStatement && app.recommendationLetter;
+    const ok =
+      app.gpa >= minGPA &&
+      !!app.highSchoolDiploma &&
+      !!app.personalStatement &&
+      !!app.recommendationLetter;
+
     const outcome = ok ? 'Meets Criteria' : 'Criteria Not Met';
-    
+
     await ApplicantService.completeEvaluation(sessionId, outcome, 'Evaluated', app.createdAt);
-    
+
     const closing = ok ? 'Congratulations! You meet all criteria.' : 'You do not meet criteria.';
     await ApplicantService.addMessageToTranscript(sessionId, 'assistant', closing);
 
-    res.json({ success: true, data: { message: closing, completed: true, outcome } });
+    return res.json({ success: true, data: { message: closing, completed: true, outcome } });
   };
 
   getChatHistory = async (req: Request, res: Response) => {
     const app = await ApplicantService.getApplicantBySessionId(req.params.sessionId);
-    if (!app) return res.status(404).json({ success: false });
-    res.json({ success: true, data: { messages: app.transcript } });
+    if (!app) {
+      return res.status(404).json({ success: false });
+    }
+
+    return res.json({ success: true, data: { messages: app.transcript } });
   };
 }

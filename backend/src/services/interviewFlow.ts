@@ -4,7 +4,7 @@
  * No more hardcoded questions!
  */
 
-import { RequirementsParser, ProgramRequirements } from './requirementsParser';
+import {ProgramRequirements } from './requirementsParser';
 
 export interface CollectedData {
   name?: string;

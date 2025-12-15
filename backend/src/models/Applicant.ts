@@ -14,7 +14,7 @@ export interface IApplicant extends Document {
   ruleSummary: string;
   transcript: IMessage[];
   sessionId: string;
-  
+
   // Quantitative fields
   gpa?: number;
   age?: number;
@@ -28,14 +28,14 @@ export interface IApplicant extends Document {
     duolingo?: number;
   };
   workExperience?: number;
-  
+
   // Boolean/Qualitative fields
   highSchoolDiploma?: boolean;
   mathCourses?: boolean;
   isInternational?: boolean;
   personalStatement?: boolean;
   recommendationLetter?: boolean;
-  
+
   extracurriculars?: string[];
   metadata: {
     ipAddress?: string;
@@ -45,6 +45,8 @@ export interface IApplicant extends Document {
   };
   createdAt: Date;
   updatedAt: Date;
+
+  addMessage(role: IMessage['role'], content: string): Promise<IApplicant>;
 }
 
 const MessageSchema = new Schema<IMessage>({
@@ -166,7 +168,7 @@ ApplicantSchema.index({ program: 1, outcome: 1 });
 ApplicantSchema.index({ outcome: 1 });
 
 // Virtual for interview duration in minutes
-ApplicantSchema.virtual('interviewDurationMinutes').get(function() {
+ApplicantSchema.virtual('interviewDurationMinutes').get(function () {
   if (this.metadata.interviewDuration) {
     return Math.round(this.metadata.interviewDuration / 60000);
   }
@@ -174,7 +176,7 @@ ApplicantSchema.virtual('interviewDurationMinutes').get(function() {
 });
 
 // Instance method to add message to transcript
-ApplicantSchema.methods.addMessage = function(role: 'user' | 'assistant' | 'system', content: string) {
+ApplicantSchema.methods.addMessage = function (role: 'user' | 'assistant' | 'system', content: string) {
   this.transcript.push({
     role,
     content,
@@ -184,7 +186,7 @@ ApplicantSchema.methods.addMessage = function(role: 'user' | 'assistant' | 'syst
 };
 
 // Static method to get statistics
-ApplicantSchema.statics.getStatistics = async function() {
+ApplicantSchema.statics.getStatistics = async function () {
   const stats = await this.aggregate([
     {
       $group: {
