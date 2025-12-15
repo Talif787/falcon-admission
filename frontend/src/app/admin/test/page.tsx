@@ -1,8 +1,13 @@
-// EMERGENCY SIMPLE VERSION - Replace AdminDashboard.tsx temporarily
+// frontend/src/components/admin/AdminDashboard.tsx
+// EMERGENCY SIMPLE VERSION (PRODUCTION-SAFE)
+// - Uses NEXT_PUBLIC_API_URL (falls back to localhost for local dev)
+// - No `any`
+// - No hook dependency warnings (useCallback + correct deps)
+// - Safer fetch handling (checks response.ok + defensive JSON parsing)
 
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, Trash2 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 
@@ -17,53 +22,104 @@ interface Applicant {
   gpa?: number;
 }
 
+type ApplicantsResponse = {
+  success?: boolean;
+  message?: string;
+  data?: {
+    applicants?: Applicant[];
+  };
+};
+
+type DeleteResponse = {
+  success?: boolean;
+  message?: string;
+};
+
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "Unexpected error";
+};
+
 export default function AdminDashboard() {
+  const API_BASE_URL = useMemo(() => {
+    const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+    return raw.replace(/\/$/, "");
+  }, []);
+
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadApplicants();
-  }, []);
-
-  const loadApplicants = async () => {
+  const loadApplicants = useCallback(async () => {
     try {
-      console.log("Loading applicants...");
       setLoading(true);
 
-      const response = await fetch(
-        "http://localhost:5000/api/admin/applicants"
-      );
-      const json = await response.json();
+      const response = await fetch(`${API_BASE_URL}/api/admin/applicants`, {
+        method: "GET",
+      });
 
-      console.log("Response:", json);
-      console.log("Applicants:", json.data.applicants);
+      // Defensive JSON parse (in case backend returns HTML error page, etc.)
+      let json: ApplicantsResponse | null = null;
+      try {
+        json = (await response.json()) as ApplicantsResponse;
+      } catch {
+        json = null;
+      }
 
-      setApplicants(json.data.applicants);
+      if (!response.ok) {
+        const msg =
+          json?.message || `Failed to load applicants (HTTP ${response.status})`;
+        toast.error(msg);
+        setApplicants([]);
+        return;
+      }
 
-      console.log("State set to:", json.data.applicants);
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error("Failed to load");
+      const list = json?.data?.applicants ?? [];
+      setApplicants(list);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to load");
+      setApplicants([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [API_BASE_URL]);
 
-  const handleDelete = async (sessionId: string) => {
-    if (!confirm("Delete this applicant?")) return;
+  const handleDelete = useCallback(
+    async (sessionId: string) => {
+      if (!confirm("Delete this applicant?")) return;
 
-    try {
-      await fetch(`http://localhost:5000/api/admin/applicants/${sessionId}`, {
-        method: "DELETE",
-      });
-      toast.success("Deleted");
-      loadApplicants();
-    } catch {
-      toast.error("Delete failed");
-    }
-  };
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/admin/applicants/${encodeURIComponent(sessionId)}`,
+          { method: "DELETE" }
+        );
 
-  console.log("RENDER - Applicants:", applicants, "Count:", applicants.length);
+        let json: DeleteResponse | null = null;
+        try {
+          json = (await response.json()) as DeleteResponse;
+        } catch {
+          json = null;
+        }
+
+        if (!response.ok || json?.success === false) {
+          const msg =
+            json?.message || `Delete failed (HTTP ${response.status})`;
+          toast.error(msg);
+          return;
+        }
+
+        toast.success("Deleted");
+        await loadApplicants();
+      } catch (err: unknown) {
+        toast.error(getErrorMessage(err) || "Delete failed");
+      }
+    },
+    [API_BASE_URL, loadApplicants]
+  );
+
+  useEffect(() => {
+    loadApplicants();
+  }, [loadApplicants]);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -86,6 +142,7 @@ export default function AdminDashboard() {
           <p className="text-sm">
             <strong>Debug Info:</strong>
           </p>
+          <p className="text-sm">API Base: {API_BASE_URL}</p>
           <p className="text-sm">Loading: {loading ? "YES" : "NO"}</p>
           <p className="text-sm">Count: {applicants.length}</p>
           <p className="text-sm">Type: {typeof applicants}</p>
@@ -116,7 +173,7 @@ export default function AdminDashboard() {
                     <div className="text-sm text-gray-500 mt-1">
                       {app.ruleSummary}
                     </div>
-                    {app.gpa && (
+                    {typeof app.gpa === "number" && (
                       <div className="text-sm text-gray-600 mt-1">
                         GPA: {app.gpa}
                       </div>
@@ -148,9 +205,10 @@ export default function AdminDashboard() {
 
       <div className="mt-4 bg-blue-50 border border-blue-200 rounded p-4">
         <p className="text-sm text-blue-900">
-          <strong>Note:</strong> This is a simplified test version. If you can
-          see applicants here, the issue is in the original AdminDashboard
-          component logic.
+          <strong>Note:</strong> This version is production-safe and uses{" "}
+          <code>NEXT_PUBLIC_API_URL</code>. Set it on Vercel to:
+          <br />
+          <code>https://falcon-backend-ypgb.onrender.com</code>
         </p>
       </div>
     </div>

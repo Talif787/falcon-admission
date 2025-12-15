@@ -2,6 +2,6 @@
   "/_not-found/page": "app/_not-found/page.js",
   "/admin/page": "app/admin/page.js",
   "/admin/test/page": "app/admin/test/page.js",
-  "/page": "app/page.js",
-  "/interview/[sessionId]/page": "app/interview/[sessionId]/page.js"
+  "/interview/[sessionId]/page": "app/interview/[sessionId]/page.js",
+  "/page": "app/page.js"
 }

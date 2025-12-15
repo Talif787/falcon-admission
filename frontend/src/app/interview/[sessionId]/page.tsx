@@ -1,8 +1,14 @@
 // frontend/src/app/interview/[sessionId]/page.tsx
+// PRODUCTION-SAFE VERSION
+// - Uses NEXT_PUBLIC_API_URL (falls back to localhost for local dev)
+// - No hook dependency warnings
+// - Defensive fetch + JSON parsing
+// - Keeps your UI/logic intact
+
 "use client";
 
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Loader2, CheckCircle, XCircle, Bot, User } from "lucide-react";
 import { format } from "date-fns";
 import toast from "react-hot-toast";
@@ -13,155 +19,193 @@ interface Message {
   timestamp: Date;
 }
 
+type InitResponse = {
+  success?: boolean;
+  message?: string;
+  data?: { message?: string; sessionId?: string };
+};
+
+type SendResponse = {
+  success?: boolean;
+  message?: string;
+  data?: {
+    message?: string;
+    completed?: boolean;
+    outcome?: string;
+    summary?: string;
+  };
+};
+
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "Unexpected error";
+};
+
 export default function InterviewPage() {
   const params = useParams();
-  const sessionId = params.sessionId as string;
+  const sessionId = String(params.sessionId || "");
+
+  const API_BASE_URL = useMemo(() => {
+    const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+    return raw.replace(/\/$/, "");
+  }, []);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isCompleted, setIsCompleted] = useState(false);
-  const [outcome, setOutcome] = useState<string>("");
-  const [summary, setSummary] = useState<string>("");
-  const [program, setProgram] = useState<string>("");
+  const [outcome, setOutcome] = useState("");
+  const [summary, setSummary] = useState("");
+  const [program, setProgram] = useState("");
   const [showProgramSelect, setShowProgramSelect] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-    const initializeChat = useCallback(async () => {
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  const initializeChat = useCallback(async () => {
+    if (!sessionId) return;
+
     try {
       setIsInitializing(true);
 
-      const response = await fetch(
-        `http://localhost:5000/api/chat/${sessionId}/init`
-      );
-      const data = await response.json();
+      const response = await fetch(`${API_BASE_URL}/api/chat/${sessionId}/init`, {
+        method: "GET",
+      });
 
-      if (data.success) {
-        setMessages([
-          {
-            role: "assistant",
-            content: data.data.message,
-            timestamp: new Date(),
-          },
-        ]);
-
-        if (
-          data.data.message.toLowerCase().includes("business") &&
-          data.data.message.toLowerCase().includes("computer science")
-        ) {
-          setShowProgramSelect(true);
-        }
-      } else {
-        toast.error(data.message || "Failed to initialize chat");
+      let data: InitResponse | null = null;
+      try {
+        data = (await response.json()) as InitResponse;
+      } catch {
+        data = null;
       }
-    } catch (error) {
-      console.error("Error initializing chat:", error);
-      toast.error("Failed to connect to server");
+
+      if (!response.ok || data?.success === false) {
+        toast.error(data?.message || `Failed to initialize (HTTP ${response.status})`);
+        return;
+      }
+
+      const greeting = data?.data?.message || "Welcome!";
+      setMessages([
+        {
+          role: "assistant",
+          content: greeting,
+          timestamp: new Date(),
+        },
+      ]);
+
+      const lower = greeting.toLowerCase();
+      if (lower.includes("business") && lower.includes("computer science")) {
+        setShowProgramSelect(true);
+      } else {
+        setShowProgramSelect(false);
+      }
+    } catch (err: unknown) {
+      console.error("Error initializing chat:", err);
+      toast.error(getErrorMessage(err) || "Failed to connect to server");
     } finally {
       setIsInitializing(false);
     }
-  }, [sessionId]);
+  }, [API_BASE_URL, sessionId]);
 
   useEffect(() => {
     initializeChat();
   }, [initializeChat]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  const sendMessage = useCallback(
+    async (messageText?: string, selectedProgram?: string) => {
+      const textToSend = (messageText ?? inputMessage).trim();
+      if (!textToSend || isLoading || isCompleted || !sessionId) return;
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+      const userMessage: Message = {
+        role: "user",
+        content: textToSend,
+        timestamp: new Date(),
+      };
 
+      setMessages((prev) => [...prev, userMessage]);
+      setInputMessage("");
+      setIsLoading(true);
 
-
-  const selectProgram = async (selectedProgram: string) => {
-    setProgram(selectedProgram);
-    setShowProgramSelect(false);
-
-    // Send program selection as first message
-    await sendMessage(
-      `I'm interested in the ${selectedProgram} program`,
-      selectedProgram
-    );
-  };
-
-  const sendMessage = async (
-    messageText?: string,
-    selectedProgram?: string
-  ) => {
-    const textToSend = messageText || inputMessage.trim();
-    if (!textToSend || isLoading || isCompleted) return;
-
-    const userMessage: Message = {
-      role: "user",
-      content: textToSend,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage("");
-    setIsLoading(true);
-
-    try {
-      const response = await fetch(
-        `http://localhost:5000/api/chat/${sessionId}/message`,
-        {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/chat/${sessionId}/message`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             message: textToSend,
             program: selectedProgram || program,
           }),
+        });
+
+        let data: SendResponse | null = null;
+        try {
+          data = (await response.json()) as SendResponse;
+        } catch {
+          data = null;
         }
-      );
 
-      const data = await response.json();
+        if (!response.ok || data?.success === false) {
+          toast.error(data?.message || `Failed to send (HTTP ${response.status})`);
+          return;
+        }
 
-      if (data.success) {
-        const assistantMessage: Message = {
-          role: "assistant",
-          content: data.data.message,
-          timestamp: new Date(),
-        };
+        const reply = data?.data?.message || "OK";
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: reply, timestamp: new Date() },
+        ]);
 
-        setMessages((prev) => [...prev, assistantMessage]);
-
-        // Check if interview completed
-        if (data.data.completed) {
+        if (data?.data?.completed) {
           setIsCompleted(true);
-          setOutcome(data.data.outcome);
-          setSummary(data.data.summary);
+          setOutcome(data?.data?.outcome || "");
+          setSummary(data?.data?.summary || "");
         }
-      } else {
-        toast.error(data.message || "Failed to send message");
+      } catch (err: unknown) {
+        console.error("Error sending message:", err);
+        toast.error(getErrorMessage(err) || "Failed to send message");
+      } finally {
+        setIsLoading(false);
+        inputRef.current?.focus();
       }
-    } catch (error) {
-      console.error("Error sending message:", error);
-      toast.error("Failed to send message");
-    } finally {
-      setIsLoading(false);
-      inputRef.current?.focus();
-    }
-  };
+    },
+    [API_BASE_URL, inputMessage, isLoading, isCompleted, sessionId, program]
+  );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    sendMessage();
-  };
+  const selectProgram = useCallback(
+    async (selectedProgram: string) => {
+      setProgram(selectedProgram);
+      setShowProgramSelect(false);
+      await sendMessage(`I'm interested in the ${selectedProgram} program`, selectedProgram);
+    },
+    [sendMessage]
+  );
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
       e.preventDefault();
-      sendMessage();
-    }
-  };
+      void sendMessage();
+    },
+    [sendMessage]
+  );
+
+  const handleKeyPress = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void sendMessage();
+      }
+    },
+    [sendMessage]
+  );
 
   if (isInitializing) {
     return (
@@ -181,11 +225,10 @@ export default function InterviewPage() {
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">
-                Falcon University
-              </h1>
+              <h1 className="text-xl font-bold text-gray-900">Falcon University</h1>
               <p className="text-sm text-gray-600">Admission Interview</p>
             </div>
+
             {isCompleted && (
               <div className="flex items-center gap-2">
                 {outcome === "Meets Criteria" ? (
@@ -212,9 +255,7 @@ export default function InterviewPage() {
           {messages.map((message, index) => (
             <div
               key={index}
-              className={`flex gap-3 ${
-                message.role === "user" ? "flex-row-reverse" : "flex-row"
-              }`}
+              className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
               <div
                 className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
@@ -240,9 +281,7 @@ export default function InterviewPage() {
                       : "bg-gray-100 text-gray-900"
                   }`}
                 >
-                  <p className="text-sm whitespace-pre-wrap break-words">
-                    {message.content}
-                  </p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
                 </div>
                 <p
                   className={`text-xs text-gray-500 mt-1 ${
@@ -265,15 +304,15 @@ export default function InterviewPage() {
                   <div
                     className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                     style={{ animationDelay: "0ms" }}
-                  ></div>
+                  />
                   <div
                     className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                     style={{ animationDelay: "150ms" }}
-                  ></div>
+                  />
                   <div
                     className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                     style={{ animationDelay: "300ms" }}
-                  ></div>
+                  />
                 </div>
               </div>
             </div>
@@ -290,13 +329,13 @@ export default function InterviewPage() {
             </p>
             <div className="flex gap-3">
               <button
-                onClick={() => selectProgram("Business")}
+                onClick={() => void selectProgram("Business")}
                 className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
                 Business
               </button>
               <button
-                onClick={() => selectProgram("Computer Science")}
+                onClick={() => void selectProgram("Computer Science")}
                 className="flex-1 px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
               >
                 Computer Science
@@ -339,10 +378,7 @@ export default function InterviewPage() {
 
         {/* Input */}
         {!isCompleted && !showProgramSelect && (
-          <form
-            onSubmit={handleSubmit}
-            className="bg-white rounded-lg shadow-sm p-4"
-          >
+          <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-sm p-4">
             <div className="flex gap-2">
               <input
                 ref={inputRef}
@@ -359,11 +395,7 @@ export default function InterviewPage() {
                 disabled={isLoading || !inputMessage.trim()}
                 className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
-                {isLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Send className="w-5 h-5" />
-                )}
+                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </button>
             </div>
           </form>
