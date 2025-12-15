@@ -1,32 +1,38 @@
 // frontend/src/components/admin/AdminDashboard.tsx
-// EMERGENCY SIMPLE VERSION (PRODUCTION-SAFE)
-// - Uses NEXT_PUBLIC_API_URL instead of hardcoded localhost
-// - ESLint-safe (no unused vars, no explicit any)
-// - Stable hooks (useCallback + proper dependencies)
-// - Better error handling (checks response.ok + safe JSON access)
+// COMPLETE VERSION - Full design with working data fetch (PRODUCTION SAFE)
 
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Eye, Trash2 } from "lucide-react";
-import toast, { Toaster } from "react-hot-toast";
+import React, { useState, useEffect, useCallback } from "react";
+import UploadSection from "./UploadSection";
+import ResultsTable from "./ResultsTable";
+import TranscriptModal from "./TranscriptModal";
+import { Applicant, KnowledgeBase } from "@/lib/types";
+import toast from "react-hot-toast";
+import { FileText, Users, TrendingUp, Clock } from "lucide-react";
 
-interface Applicant {
-  _id: string;
-  studentName: string;
-  program: string;
-  outcome: string;
-  ruleSummary: string;
-  sessionId: string;
-  createdAt: string;
-  gpa?: number;
+interface Statistics {
+  total: number;
+  eligible: number;
+  notEligible: number;
+  inProgress: number;
+  businessApplicants: number;
+  csApplicants: number;
 }
 
-type ApplicantsApiResponse = {
-  success?: boolean;
+type ApiEnvelope<T> = {
+  success: boolean;
   message?: string;
-  data?: {
-    applicants?: Applicant[];
+  data?: T;
+};
+
+type ApplicantsListPayload = {
+  applicants: Applicant[];
+  pagination?: {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    itemsPerPage: number;
   };
 };
 
@@ -36,190 +42,341 @@ const getErrorMessage = (err: unknown): string => {
   return "Unexpected error";
 };
 
+// Use env in production, fallback to localhost for local dev
+const API_BASE_URL =
+  (process.env.NEXT_PUBLIC_API_URL?.trim() || "http://localhost:5000").replace(
+    /\/+$/,
+    ""
+  );
+
 export default function AdminDashboard() {
-  const API_BASE_URL = useMemo(() => {
-    const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-    return raw.replace(/\/$/, "");
-  }, []);
-
   const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBase | null>(null);
+  const [statistics, setStatistics] = useState<Statistics | null>(null);
+  const [selectedApplicant, setSelectedApplicant] = useState<Applicant | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filters, setFilters] = useState<{ outcome: string; program: string }>({
+    outcome: "",
+    program: "",
+  });
 
-  const loadApplicants = useCallback(async () => {
+  const fetchApplicants = useCallback(async () => {
     try {
-      console.log("Loading applicants...");
-      setLoading(true);
+      const url = new URL(`${API_BASE_URL}/api/admin/applicants`);
+      url.searchParams.set("page", currentPage.toString());
+      url.searchParams.set("limit", "20");
+      if (filters.outcome) url.searchParams.set("outcome", filters.outcome);
+      if (filters.program) url.searchParams.set("program", filters.program);
 
-      const response = await fetch(`${API_BASE_URL}/api/admin/applicants`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      });
+      const response = await fetch(url.toString(), { cache: "no-store" });
 
-      // If backend returns HTML error page or non-JSON, this prevents crashing
-      let json: ApplicantsApiResponse | null = null;
-      try {
-        json = (await response.json()) as ApplicantsApiResponse;
-      } catch {
-        json = null;
+      const json = (await response.json()) as ApiEnvelope<ApplicantsListPayload>;
+
+      if (!response.ok || !json?.success) {
+        throw new Error(json?.message || `Failed to fetch applicants (${response.status})`);
       }
 
-      if (!response.ok) {
-        const msg =
-          json?.message ||
-          `Failed to load applicants (HTTP ${response.status})`;
-        console.error("Applicants fetch failed:", msg);
-        toast.error(msg);
-        setApplicants([]);
+      const payload = json.data;
+      setApplicants(payload?.applicants ?? []);
+      setTotalPages(payload?.pagination?.totalPages ?? 1);
+    } catch (err: unknown) {
+      console.error("Error fetching applicants:", err);
+      setApplicants([]);
+      setTotalPages(1);
+      // keep this quiet to avoid toast spam on every render/filter change
+    }
+  }, [currentPage, filters.outcome, filters.program]);
+
+  const fetchKnowledgeBase = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/knowledge-base`, {
+        cache: "no-store",
+      });
+
+      const json = (await response.json()) as ApiEnvelope<KnowledgeBase>;
+
+      if (!response.ok || !json?.success) {
+        setKnowledgeBase(null);
         return;
       }
 
-      const list = json?.data?.applicants ?? [];
-      console.log("Applicants:", list);
+      setKnowledgeBase(json.data ?? null);
+    } catch {
+      setKnowledgeBase(null);
+    }
+  }, []);
 
-      setApplicants(list);
+  const fetchStatistics = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/statistics`, {
+        cache: "no-store",
+      });
+
+      const json = (await response.json()) as ApiEnvelope<Statistics>;
+
+      if (!response.ok || !json?.success) {
+        setStatistics(null);
+        return;
+      }
+
+      setStatistics(json.data ?? null);
     } catch (err: unknown) {
-      console.error("Error:", err);
-      toast.error(getErrorMessage(err) || "Failed to load");
-      setApplicants([]);
+      console.error("Error fetching statistics:", err);
+      setStatistics(null);
+    }
+  }, []);
+
+  const fetchAllData = useCallback(async () => {
+    setLoading(true);
+    try {
+      await Promise.all([fetchApplicants(), fetchKnowledgeBase(), fetchStatistics()]);
     } finally {
       setLoading(false);
     }
-  }, [API_BASE_URL]);
-
-  const handleDelete = useCallback(
-    async (sessionId: string) => {
-      if (!confirm("Delete this applicant?")) return;
-
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/api/admin/applicants/${encodeURIComponent(sessionId)}`,
-          { method: "DELETE" }
-        );
-
-        let json: { success?: boolean; message?: string } | null = null;
-        try {
-          json = (await response.json()) as { success?: boolean; message?: string };
-        } catch {
-          json = null;
-        }
-
-        if (!response.ok || json?.success === false) {
-          const msg =
-            json?.message ||
-            `Delete failed (HTTP ${response.status})`;
-          toast.error(msg);
-          return;
-        }
-
-        toast.success("Deleted");
-        await loadApplicants();
-      } catch (err: unknown) {
-        toast.error(getErrorMessage(err) || "Delete failed");
-      }
-    },
-    [API_BASE_URL, loadApplicants]
-  );
-
-  const handleView = useCallback((sessionId: string) => {
-    // Using toast instead of alert (cleaner + non-blocking)
-    toast(`Session: ${sessionId}`, { duration: 4000 });
-  }, []);
+  }, [fetchApplicants, fetchKnowledgeBase, fetchStatistics]);
 
   useEffect(() => {
-    loadApplicants();
-  }, [loadApplicants]);
+    fetchAllData();
+  }, [fetchAllData]);
 
-  console.log("RENDER - Applicants:", applicants, "Count:", applicants.length);
+  useEffect(() => {
+    if (currentPage > 1 || filters.outcome || filters.program) {
+      fetchApplicants();
+    }
+  }, [currentPage, filters.outcome, filters.program, fetchApplicants]);
+
+  const handlePDFUpload = async (file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+
+      const response = await fetch(`${API_BASE_URL}/api/admin/upload-pdf`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const json = (await response.json()) as ApiEnvelope<unknown>;
+
+      if (!response.ok || !json?.success) {
+        throw new Error(json?.message || `Failed to upload PDF (${response.status})`);
+      }
+
+      toast.success("PDF uploaded successfully!");
+      await fetchKnowledgeBase();
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to upload PDF");
+      throw err;
+    }
+  };
+
+  const handleStartInterview = async () => {
+    if (!knowledgeBase) {
+      toast.error("Please upload requirements PDF first");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/start-interview`, {
+        method: "POST",
+      });
+
+      const json = (await response.json()) as ApiEnvelope<{
+        sessionId: string;
+        interviewUrl: string;
+      }>;
+
+      if (!response.ok || !json?.success || !json?.data?.interviewUrl) {
+        throw new Error(json?.message || `Failed to create interview (${response.status})`);
+      }
+
+      // interviewUrl is a frontend path like "/interview/<id>"
+      const interviewUrl = `${window.location.origin}${json.data.interviewUrl}`;
+
+      try {
+        await navigator.clipboard.writeText(interviewUrl);
+        toast.success("Interview link copied to clipboard!");
+      } catch {
+        toast.success("Interview created!");
+      }
+
+      window.open(interviewUrl, "_blank");
+
+      setTimeout(() => {
+        fetchApplicants();
+        fetchStatistics();
+      }, 500);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to create interview session");
+    }
+  };
+
+  const handleViewTranscript = async (applicant: Applicant) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/admin/applicants/${encodeURIComponent(applicant.sessionId)}/transcript`,
+        { cache: "no-store" }
+      );
+
+      const json = (await response.json()) as ApiEnvelope<Applicant>;
+
+      if (!response.ok || !json?.success || !json?.data) {
+        throw new Error(json?.message || `Failed to load transcript (${response.status})`);
+      }
+
+      setSelectedApplicant(json.data);
+      setIsModalOpen(true);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to load transcript");
+    }
+  };
+
+  const handleDeleteApplicant = async (sessionId: string) => {
+    if (!confirm("Are you sure you want to delete this applicant?")) return;
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/admin/applicants/${encodeURIComponent(sessionId)}`,
+        { method: "DELETE" }
+      );
+
+      const json = (await response.json()) as ApiEnvelope<unknown>;
+
+      if (!response.ok || !json?.success) {
+        throw new Error(json?.message || `Failed to delete applicant (${response.status})`);
+      }
+
+      toast.success("Applicant deleted successfully");
+      await Promise.all([fetchApplicants(), fetchStatistics()]);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to delete applicant");
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <Toaster />
-
-      <h1 className="text-3xl font-bold mb-8">
-        Admin Dashboard (Simple Test)
-      </h1>
-
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">Applicants</h2>
-          <button
-            onClick={loadApplicants}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div className="mb-4 p-3 bg-yellow-100 rounded">
-          <p className="text-sm">
-            <strong>Debug Info:</strong>
-          </p>
-          <p className="text-sm">API Base: {API_BASE_URL}</p>
-          <p className="text-sm">Loading: {loading ? "YES" : "NO"}</p>
-          <p className="text-sm">Count: {applicants.length}</p>
-          <p className="text-sm">Type: {typeof applicants}</p>
-          <p className="text-sm">
-            Is Array: {Array.isArray(applicants) ? "YES" : "NO"}
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="text-center py-8">Loading...</div>
-        ) : applicants.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            No applicants found
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {applicants.map((app) => (
-              <div
-                key={app._id}
-                className="border rounded p-4 hover:bg-gray-50"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="font-bold text-lg">{app.studentName}</div>
-                    <div className="text-sm text-gray-600">
-                      {app.program} • {app.outcome}
-                    </div>
-                    <div className="text-sm text-gray-500 mt-1">
-                      {app.ruleSummary}
-                    </div>
-                    {typeof app.gpa === "number" && (
-                      <div className="text-sm text-gray-600 mt-1">
-                        GPA: {app.gpa}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleView(app.sessionId)}
-                      className="p-2 hover:bg-gray-200 rounded"
-                      title="View Details"
-                    >
-                      <Eye className="w-5 h-5 text-blue-600" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(app.sessionId)}
-                      className="p-2 hover:bg-gray-200 rounded"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-5 h-5 text-red-600" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+    <div className="container mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">
+          Falcon University Admin Dashboard
+        </h1>
+        <p className="text-gray-600">
+          Manage admission requirements and review applicant interviews
+        </p>
+        <p className="text-xs text-gray-400 mt-2">API: {API_BASE_URL}</p>
       </div>
 
-      <div className="mt-4 bg-blue-50 border border-blue-200 rounded p-4">
-        <p className="text-sm text-blue-900">
-          <strong>Note:</strong> This is a simplified production-safe test version.
-          It uses <code>NEXT_PUBLIC_API_URL</code> and falls back to localhost only for local dev.
-        </p>
+      {/* Statistics Cards */}
+      {statistics && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <StatCard
+            icon={<Users className="w-6 h-6 text-blue-600" />}
+            title="Total Applicants"
+            value={statistics.total}
+            color="bg-blue-50"
+          />
+          <StatCard
+            icon={<TrendingUp className="w-6 h-6 text-green-600" />}
+            title="Meets Criteria"
+            value={statistics.eligible}
+            subtitle={`${Math.round(
+              (statistics.eligible / Math.max(statistics.total, 1)) * 100
+            )}%`}
+            color="bg-green-50"
+          />
+          <StatCard
+            icon={<FileText className="w-6 h-6 text-purple-600" />}
+            title="Business Program"
+            value={statistics.businessApplicants}
+            color="bg-purple-50"
+          />
+          <StatCard
+            icon={<Clock className="w-6 h-6 text-orange-600" />}
+            title="In Progress"
+            value={statistics.inProgress}
+            color="bg-orange-50"
+          />
+        </div>
+      )}
+
+      {/* Upload and Start Interview Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <UploadSection onUpload={handlePDFUpload} currentKnowledgeBase={knowledgeBase} />
+
+          <div className="flex flex-col justify-center">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Interview Management</h2>
+            <button
+              onClick={handleStartInterview}
+              disabled={!knowledgeBase}
+              className={`w-full py-4 px-6 rounded-lg font-semibold text-white transition-all ${
+                knowledgeBase
+                  ? "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl"
+                  : "bg-gray-300 cursor-not-allowed"
+              }`}
+            >
+              Start New Interview
+            </button>
+            {!knowledgeBase && (
+              <p className="text-sm text-gray-500 mt-2">
+                Upload requirements PDF to enable interviews
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Results Table */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+        <ResultsTable
+          applicants={applicants}
+          loading={loading}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          filters={filters}
+          onPageChange={setCurrentPage}
+          onFilterChange={setFilters}
+          onViewTranscript={handleViewTranscript}
+          onDelete={handleDeleteApplicant}
+          onRefresh={fetchApplicants}
+        />
+      </div>
+
+      {/* Transcript Modal */}
+      {selectedApplicant && (
+        <TranscriptModal
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            setSelectedApplicant(null);
+          }}
+          applicant={selectedApplicant}
+        />
+      )}
+    </div>
+  );
+}
+
+interface StatCardProps {
+  icon: React.ReactNode;
+  title: string;
+  value: number;
+  subtitle?: string;
+  color: string;
+}
+
+function StatCard({ icon, title, value, subtitle, color }: StatCardProps) {
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <p className="text-sm font-medium text-gray-600 mb-2">{title}</p>
+          <p className="text-3xl font-bold text-gray-900">{value}</p>
+          {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
+        </div>
+        <div className={`${color} p-3 rounded-lg`}>{icon}</div>
       </div>
     </div>
   );
