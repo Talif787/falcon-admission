@@ -28,7 +28,7 @@ class Server {
       cors({
         origin: [
           'http://localhost:3000',
-          'https://falcon-admission.vercel.app/' 
+          'https://falcon-admission.vercel.app/admin' 
         ],
         credentials: true
       })
