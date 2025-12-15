@@ -873,7 +873,7 @@ Bot: "You don't meet criteria because:
 
 ## 🎥 Demo Video
 
-[Loom Demo Link](https://loom.com/your-video)
+[Loom Demo Link](https://www.loom.com/share/4cfed69593204e2aa85616ca0715dd35)
 
 **Demo includes:**
 1. System architecture overview
