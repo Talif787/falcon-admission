@@ -1,15 +1,15 @@
 // frontend/src/components/admin/AdminDashboard.tsx
 // COMPLETE VERSION - Full design with working data fetch
 
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import UploadSection from './UploadSection';
-import ResultsTable from './ResultsTable';
-import TranscriptModal from './TranscriptModal';
-import { Applicant, KnowledgeBase } from '@/lib/types';
-import toast from 'react-hot-toast';
-import { FileText, Users, TrendingUp, Clock } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from "react";
+import UploadSection from "./UploadSection";
+import ResultsTable from "./ResultsTable";
+import TranscriptModal from "./TranscriptModal";
+import { Applicant, KnowledgeBase } from "@/lib/types";
+import toast from "react-hot-toast";
+import { FileText, Users, TrendingUp, Clock } from "lucide-react";
 
 interface Statistics {
   total: number;
@@ -20,6 +20,12 @@ interface Statistics {
   csApplicants: number;
 }
 
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "Unexpected error";
+};
+
 export default function AdminDashboard() {
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBase | null>(null);
@@ -29,180 +35,177 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState<{ outcome: string; program: string }>({ outcome: '', program: '' });
+  const [filters, setFilters] = useState<{ outcome: string; program: string }>({
+    outcome: "",
+    program: "",
+  });
+
+  const fetchApplicants = useCallback(async () => {
+    try {
+      console.log("📡 Fetching applicants...");
+
+      const url = new URL("http://localhost:5000/api/admin/applicants");
+      url.searchParams.set("page", currentPage.toString());
+      url.searchParams.set("limit", "20");
+      if (filters.outcome) url.searchParams.set("outcome", filters.outcome);
+      if (filters.program) url.searchParams.set("program", filters.program);
+
+      const response = await fetch(url.toString());
+      const json = await response.json();
+
+      setApplicants(json?.data?.applicants ?? []);
+      setTotalPages(json?.data?.pagination?.totalPages || 1);
+    } catch (err: unknown) {
+      console.error("Error fetching applicants:", err);
+      setApplicants([]);
+    }
+  }, [currentPage, filters.outcome, filters.program]);
+
+  const fetchKnowledgeBase = useCallback(async () => {
+    try {
+      const response = await fetch("http://localhost:5000/api/admin/knowledge-base");
+      if (response.ok) {
+        const json = await response.json();
+        setKnowledgeBase(json?.data ?? null);
+      } else {
+        setKnowledgeBase(null);
+      }
+    } catch {
+      setKnowledgeBase(null);
+    }
+  }, []);
+
+  const fetchStatistics = useCallback(async () => {
+    try {
+      const response = await fetch("http://localhost:5000/api/admin/statistics");
+      const json = await response.json();
+      setStatistics(json?.data ?? null);
+    } catch (err: unknown) {
+      console.error("Error fetching statistics:", err);
+      setStatistics(null);
+    }
+  }, []);
+
+  const fetchAllData = useCallback(async () => {
+    setLoading(true);
+    try {
+      await Promise.all([fetchApplicants(), fetchKnowledgeBase(), fetchStatistics()]);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchApplicants, fetchKnowledgeBase, fetchStatistics]);
 
   // Initial load
   useEffect(() => {
-    console.log('Component mounted');
+    console.log("Component mounted");
     fetchAllData();
-  }, []);
+  }, [fetchAllData]);
 
   // Reload when page or filters change
   useEffect(() => {
     if (currentPage > 1 || filters.outcome || filters.program) {
       fetchApplicants();
     }
-  }, [currentPage, filters]);
-
-  const fetchAllData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([
-        fetchApplicants(),
-        fetchKnowledgeBase(),
-        fetchStatistics()
-      ]);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchApplicants = async () => {
-    try {
-      console.log('📡 Fetching applicants...');
-      
-      const url = new URL('http://localhost:5000/api/admin/applicants');
-      url.searchParams.set('page', currentPage.toString());
-      url.searchParams.set('limit', '20');
-      if (filters.outcome) url.searchParams.set('outcome', filters.outcome);
-      if (filters.program) url.searchParams.set('program', filters.program);
-      
-      console.log('🔗 URL:', url.toString());
-      
-      const response = await fetch(url.toString());
-      const json = await response.json();
-      
-      console.log('📦 Response:', json);
-      console.log('👥 Applicants count:', json.data.applicants.length);
-      
-      setApplicants(json.data.applicants);
-      setTotalPages(json.data.pagination?.totalPages || 1);
-      
-      console.log('Applicants state updated');
-    } catch (error) {
-      console.error('Error fetching applicants:', error);
-      setApplicants([]);
-    }
-  };
-
-  const fetchKnowledgeBase = async () => {
-    try {
-      const response = await fetch('http://localhost:5000/api/admin/knowledge-base');
-      if (response.ok) {
-        const json = await response.json();
-        setKnowledgeBase(json.data);
-      }
-    } catch (error) {
-      console.log('No knowledge base');
-      setKnowledgeBase(null);
-    }
-  };
-
-  const fetchStatistics = async () => {
-    try {
-      const response = await fetch('http://localhost:5000/api/admin/statistics');
-      const json = await response.json();
-      setStatistics(json.data);
-    } catch (error) {
-      console.error('Error fetching statistics:', error);
-      setStatistics(null);
-    }
-  };
+  }, [currentPage, filters.outcome, filters.program, fetchApplicants]);
 
   const handlePDFUpload = async (file: File) => {
     try {
       const formData = new FormData();
-      formData.append('pdf', file);
-      
-      const response = await fetch('http://localhost:5000/api/admin/upload-pdf', {
-        method: 'POST',
-        body: formData
+      formData.append("pdf", file);
+
+      const response = await fetch("http://localhost:5000/api/admin/upload-pdf", {
+        method: "POST",
+        body: formData,
       });
-      
+
       const json = await response.json();
-      
-      if (json.success) {
-        toast.success('PDF uploaded successfully!');
+
+      if (json?.success) {
+        toast.success("PDF uploaded successfully!");
         await fetchKnowledgeBase();
       } else {
-        throw new Error(json.message);
+        throw new Error(json?.message || "Failed to upload PDF");
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to upload PDF');
-      throw error;
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err) || "Failed to upload PDF");
+      throw err;
     }
   };
 
   const handleStartInterview = async () => {
     if (!knowledgeBase) {
-      toast.error('Please upload requirements PDF first');
+      toast.error("Please upload requirements PDF first");
       return;
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/admin/start-interview', {
-        method: 'POST'
+      const response = await fetch("http://localhost:5000/api/admin/start-interview", {
+        method: "POST",
       });
-      
+
       const json = await response.json();
-      
-      if (json.success && json.data?.sessionId && json.data?.interviewUrl) {
+
+      if (json?.success && json?.data?.sessionId && json?.data?.interviewUrl) {
         const interviewUrl = `${window.location.origin}${json.data.interviewUrl}`;
-        
+
         try {
           await navigator.clipboard.writeText(interviewUrl);
-          toast.success('Interview link copied to clipboard!');
-        } catch (e) {
-          toast.success(`Interview created!`);
+          toast.success("Interview link copied to clipboard!");
+        } catch {
+          toast.success("Interview created!");
         }
-        
-        window.open(interviewUrl, '_blank');
-        
+
+        window.open(interviewUrl, "_blank");
+
         // Refresh applicants after short delay
-        setTimeout(() => fetchApplicants(), 500);
+        setTimeout(() => {
+          fetchApplicants();
+        }, 500);
+      } else {
+        toast.error(json?.message || "Failed to create interview session");
       }
-    } catch (error: any) {
-      toast.error('Failed to create interview session');
+    } catch {
+      toast.error("Failed to create interview session");
     }
   };
 
   const handleViewTranscript = async (applicant: Applicant) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/admin/applicants/${applicant.sessionId}/transcript`);
+      const response = await fetch(
+        `http://localhost:5000/api/admin/applicants/${applicant.sessionId}/transcript`
+      );
       const json = await response.json();
-      
-      if (json.success) {
+
+      if (json?.success) {
         setSelectedApplicant(json.data);
         setIsModalOpen(true);
+      } else {
+        toast.error(json?.message || "Failed to load transcript");
       }
-    } catch (error) {
-      toast.error('Failed to load transcript');
+    } catch {
+      toast.error("Failed to load transcript");
     }
   };
 
   const handleDeleteApplicant = async (sessionId: string) => {
-    if (!confirm('Are you sure you want to delete this applicant?')) {
-      return;
-    }
+    if (!confirm("Are you sure you want to delete this applicant?")) return;
 
     try {
       const response = await fetch(`http://localhost:5000/api/admin/applicants/${sessionId}`, {
-        method: 'DELETE'
+        method: "DELETE",
       });
-      
+
       const json = await response.json();
-      
-      if (json.success) {
-        toast.success('Applicant deleted successfully');
+
+      if (json?.success) {
+        toast.success("Applicant deleted successfully");
         await fetchApplicants();
         await fetchStatistics();
       } else {
-        throw new Error(json.message);
+        toast.error(json?.message || "Failed to delete applicant");
       }
-    } catch (error) {
-      toast.error('Failed to delete applicant');
+    } catch {
+      toast.error("Failed to delete applicant");
     }
   };
 
@@ -231,7 +234,9 @@ export default function AdminDashboard() {
             icon={<TrendingUp className="w-6 h-6 text-green-600" />}
             title="Meets Criteria"
             value={statistics.eligible}
-            subtitle={`${Math.round((statistics.eligible / Math.max(statistics.total, 1)) * 100)}%`}
+            subtitle={`${Math.round(
+              (statistics.eligible / Math.max(statistics.total, 1)) * 100
+            )}%`}
             color="bg-green-50"
           />
           <StatCard
@@ -252,22 +257,17 @@ export default function AdminDashboard() {
       {/* Upload and Start Interview Section */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <UploadSection
-            onUpload={handlePDFUpload}
-            currentKnowledgeBase={knowledgeBase}
-          />
-          
+          <UploadSection onUpload={handlePDFUpload} currentKnowledgeBase={knowledgeBase} />
+
           <div className="flex flex-col justify-center">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Interview Management
-            </h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Interview Management</h2>
             <button
               onClick={handleStartInterview}
               disabled={!knowledgeBase}
               className={`w-full py-4 px-6 rounded-lg font-semibold text-white transition-all ${
                 knowledgeBase
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl'
-                  : 'bg-gray-300 cursor-not-allowed'
+                  ? "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl"
+                  : "bg-gray-300 cursor-not-allowed"
               }`}
             >
               Start New Interview
@@ -327,13 +327,9 @@ function StatCard({ icon, title, value, subtitle, color }: StatCardProps) {
         <div className="flex-1">
           <p className="text-sm font-medium text-gray-600 mb-2">{title}</p>
           <p className="text-3xl font-bold text-gray-900">{value}</p>
-          {subtitle && (
-            <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
-          )}
+          {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
         </div>
-        <div className={`${color} p-3 rounded-lg`}>
-          {icon}
-        </div>
+        <div className={`${color} p-3 rounded-lg`}>{icon}</div>
       </div>
     </div>
   );

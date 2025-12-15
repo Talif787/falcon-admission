@@ -4,6 +4,26 @@ import { Applicant, KnowledgeBase, ApiResponse, PaginatedResponse } from './type
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
+export interface UploadPDFResponseData {
+  id: string;
+  originalName: string;
+  pageCount: number;
+  wordCount: number;
+  sectionsCount: number;
+  embeddingsCount: number;
+  version: number;
+  requirements: unknown; // stays flexible because PDF requirements are dynamic
+}
+
+export interface StatisticsData {
+  total: number;
+  eligible: number;
+  notEligible: number;
+  inProgress: number;
+  businessApplicants: number;
+  csApplicants: number;
+}
+
 class APIClient {
   private client: AxiosInstance;
 
@@ -11,26 +31,23 @@ class APIClient {
     this.client = axios.create({
       baseURL: API_BASE_URL,
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
 
     // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
+        // Avoid logging full URLs with sensitive params in prod if needed
         console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },
-      (error) => {
-        return Promise.reject(error);
-      }
+      (error) => Promise.reject(error)
     );
 
     // Response interceptor
     this.client.interceptors.response.use(
-      (response) => {
-        return response;
-      },
+      (response) => response,
       (error) => {
         console.error('API Error:', error.response?.data || error.message);
         return Promise.reject(error);
@@ -42,23 +59,31 @@ class APIClient {
     const formData = new FormData();
     formData.append('pdf', file);
 
-    return this.client.post<ApiResponse<any>>('/api/admin/upload-pdf', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
+    return this.client.post<ApiResponse<UploadPDFResponseData>>(
+      '/api/admin/upload-pdf',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       }
-    });
+    );
   }
 
-  async getApplicants(page: number = 1, limit: number = 20, filters?: { outcome?: string; program?: string }) {
+  async getApplicants(
+    page: number = 1,
+    limit: number = 20,
+    filters?: { outcome?: string; program?: string }
+  ) {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
       ...(filters?.outcome && { outcome: filters.outcome }),
-      ...(filters?.program && { program: filters.program })
+      ...(filters?.program && { program: filters.program }),
     });
 
     return this.client.get<ApiResponse<PaginatedResponse<Applicant>>>(
-      `/api/admin/applicants?${params}`
+      `/api/admin/applicants?${params.toString()}`
     );
   }
 
@@ -67,7 +92,9 @@ class APIClient {
   }
 
   async getTranscript(sessionId: string) {
-    return this.client.get<ApiResponse<Applicant>>(`/api/admin/applicants/${sessionId}/transcript`);
+    return this.client.get<ApiResponse<Applicant>>(
+      `/api/admin/applicants/${sessionId}/transcript`
+    );
   }
 
   async deleteApplicant(sessionId: string) {
@@ -75,7 +102,7 @@ class APIClient {
   }
 
   async getStatistics() {
-    return this.client.get<ApiResponse<any>>('/api/admin/statistics');
+    return this.client.get<ApiResponse<StatisticsData>>('/api/admin/statistics');
   }
 
   async getKnowledgeBase() {

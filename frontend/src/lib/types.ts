@@ -48,7 +48,7 @@ export interface KnowledgeBase {
     }>;
     requirements?: Array<{
       program: string;
-      criteria: Record<string, any>;
+      criteria: Record<string, unknown>;
     }>;
   };
   isActive: boolean;
