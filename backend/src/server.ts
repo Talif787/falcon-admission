@@ -24,15 +24,17 @@ class Server {
 
   private initializeMiddleware(): void {
     // CORS configuration
-    this.app.use(
-      cors({
-        origin: [
-          'http://localhost:3000',
-          'https://falcon-admission.vercel.app/admin' 
-        ],
-        credentials: true
-      })
-    );
+  this.app.use(
+  cors({
+    origin: [
+      'http://localhost:3000',
+      'https://falcon-admission.vercel.app'  // YOUR VERCEL URL!
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+  })
+);
 
     // Body parser
     this.app.use(express.json({ limit: '10mb' }));
