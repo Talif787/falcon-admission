@@ -26,8 +26,11 @@ class Server {
     // CORS configuration
     this.app.use(
       cors({
-        origin: config.frontendUrl,
-        credentials: true,
+        origin: [
+          'http://localhost:3000',
+          'https://falcon-admission.vercel.app' 
+        ],
+        credentials: true
       })
     );
 
